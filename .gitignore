@@ -1,2 +1,21 @@
+# Python virtual environment
+.venv/
 venv/
+
+# Python temporary files
+__pycache__/
+*.py[cod]
+
+# Azure Functions secrets
+function_app/local.settings.json
+local.settings.json
+
+# Environment secrets
+.env
+.env.*
+
+# macOS
 .DS_Store
+
+# VS Code local settings
+.vscode/
