@@ -1,67 +1,75 @@
 import json
-import logging
 
 import azure.functions as func
 
-from audit import log_event
-from generation import generate_answer
-from pii import redact_text
-from retrieval import retrieve_documents
+from pii import redact
 
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 
-def _json_response(payload: dict, status_code: int = 200) -> func.HttpResponse:
+@app.route(route="health", methods=["GET"])
+def health(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Simple health-check endpoint.
+
+    It confirms that the local Azure Function is running.
+    """
+
     return func.HttpResponse(
-        json.dumps(payload),
-        status_code=status_code,
+        json.dumps(
+            {
+                "status": "healthy",
+                "service": "RegDesk Complaint Triage Copilot",
+            }
+        ),
+        status_code=200,
         mimetype="application/json",
     )
 
 
-@app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def health(req: func.HttpRequest) -> func.HttpResponse:
-    return _json_response({"status": "ok"})
+@app.route(route="redact", methods=["POST"])
+def redact_complaint(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Accepts a complaint and removes basic personally identifiable information.
+    """
 
-
-@app.route(route="chat", methods=["POST"])
-def chat(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
     except ValueError:
-        return _json_response({"error": "Request body must be valid JSON."}, 400)
-
-    question = str(body.get("question", "")).strip()
-    if not question:
-        return _json_response({"error": "Field 'question' is required."}, 400)
-
-    top_k = int(body.get("top_k", 5))
-    top_k = max(1, min(top_k, 10))
-
-    redacted_question = redact_text(question)
-    try:
-        documents = retrieve_documents(question, top_k=top_k)
-        answer = generate_answer(question, documents)
-    except Exception as exc:
-        logging.exception("Chat request failed")
-        log_event(
-            "chat.failed",
-            {"question": redacted_question, "error": type(exc).__name__},
+        return func.HttpResponse(
+            json.dumps(
+                {
+                    "error": 'Send valid JSON such as {"complaint": "..."}'
+                }
+            ),
+            status_code=400,
+            mimetype="application/json",
         )
-        return _json_response({"error": "Chat request failed."}, 500)
 
-    log_event(
-        "chat.completed",
-        {"question": redacted_question, "document_count": len(documents)},
+    complaint = body.get("complaint")
+
+    if not isinstance(complaint, str) or not complaint.strip():
+        return func.HttpResponse(
+            json.dumps(
+                {
+                    "error": "complaint must be a non-empty string"
+                }
+            ),
+            status_code=400,
+            mimetype="application/json",
+        )
+
+    cleaned_complaint = redact(complaint)
+
+    return func.HttpResponse(
+        json.dumps(
+            {
+                "redacted_complaint": cleaned_complaint,
+                "pii_removed": cleaned_complaint != complaint,
+            },
+            indent=2,
+        ),
+        status_code=200,
+        mimetype="application/json",
     )
-
-    citations = [
-        {
-            "id": document.id,
-            "source": document.source,
-            "score": document.score,
-        }
-        for document in documents
-    ]
-    return _json_response({"answer": answer, "citations": citations})
