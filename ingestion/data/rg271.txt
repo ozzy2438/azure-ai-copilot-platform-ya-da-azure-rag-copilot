@@ -1,0 +1,15 @@
+Azure RAG Copilot Reference Guide
+
+The copilot uses retrieval augmented generation to answer questions from an
+Azure AI Search index before calling Azure OpenAI. The retrieval step returns
+short source chunks with document identifiers so the final response can include
+citations and avoid unsupported claims.
+
+Sensitive values such as email addresses, phone numbers, local settings files,
+and environment secrets must not be committed. Operational logs should redact
+common personal data before they are sent to Application Insights or other log
+sinks.
+
+Evaluation should use a small golden set of representative questions. Each
+question should define expected terms or behaviors so regressions are visible
+when retrieval, prompts, or index content changes.

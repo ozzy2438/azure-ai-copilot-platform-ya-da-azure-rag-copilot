@@ -1,0 +1,12 @@
+[
+  {
+    "id": "rag-flow",
+    "question": "How does the copilot answer questions?",
+    "expected_terms": ["retrieval", "Azure AI Search", "Azure OpenAI"]
+  },
+  {
+    "id": "logging-privacy",
+    "question": "What should happen to sensitive values in logs?",
+    "expected_terms": ["redact", "personal data", "Application Insights"]
+  }
+]
