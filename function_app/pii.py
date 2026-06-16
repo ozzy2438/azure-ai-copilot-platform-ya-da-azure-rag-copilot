@@ -1,10 +1,37 @@
 import re
 
 
-EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d[\d .()/-]{7,}\d)(?!\d)")
+def redact(text: str) -> str:
+    """
+    Masks common personally identifiable information in complaint text.
 
+    This is a lightweight baseline for demonstration purposes.
+    It does not replace a production-grade PII detection service.
+    """
 
-def redact_text(value: str) -> str:
-    value = EMAIL_RE.sub("[redacted-email]", value)
-    return PHONE_RE.sub("[redacted-phone]", value)
+    if not isinstance(text, str):
+        raise TypeError("text must be a string")
+
+    # Email addresses
+    text = re.sub(
+        r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
+        "[EMAIL]",
+        text,
+    )
+
+    # Australian mobile phone numbers:
+    # 0412 345 678, 0412345678, +61 412 345 678
+    text = re.sub(
+        r"(?<!\d)(?:\+61\s?4|04)\d{2}\s?\d{3}\s?\d{3}(?!\d)",
+        "[PHONE]",
+        text,
+    )
+
+    # Long numeric identifiers such as account or reference numbers
+    text = re.sub(
+        r"\b\d{6,}\b",
+        "[ID]",
+        text,
+    )
+
+    return text
