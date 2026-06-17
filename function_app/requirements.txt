@@ -1,5 +1,7 @@
 azure-functions
 azure-identity
+azure-core
 azure-search-documents
 openai
 python-dotenv
+azure-data-tables

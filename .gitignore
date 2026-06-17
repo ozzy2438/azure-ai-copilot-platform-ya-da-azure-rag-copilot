@@ -10,6 +10,9 @@ __pycache__/
 function_app/local.settings.json
 local.settings.json
 
+# Azure Functions local packages
+function_app/.python_packages/
+
 # Environment secrets
 .env
 .env.*

@@ -26,6 +26,11 @@ def classify(text: str) -> tuple[str, float]:
             "wait",
             "slow",
             "no response",
+            "not responded",
+            "has not responded",
+            "nobody has responded",
+            "no reply",
+            "still waiting",
             "response time",
         ],
         "misleading_conduct": [

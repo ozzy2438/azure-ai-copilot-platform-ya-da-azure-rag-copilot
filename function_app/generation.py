@@ -142,6 +142,44 @@ def build_context(
         context_sections
     )
 
+
+def clean_generated_text(text: str) -> str:
+    """
+    Repairs common model spacing artefacts without
+    changing the meaning of the generated note.
+    """
+
+    common_words = (
+        "response",
+        "received",
+        "required",
+        "subject",
+        "confirm",
+        "the",
+        "for",
+        "to",
+        "and",
+        "their",
+        "from",
+        "not",
+        "be",
+    )
+    pattern = (
+        r"(?<=[a-z])"
+        r"(?=("
+        + "|".join(common_words)
+        + r")\b)"
+    )
+    text = re.sub(
+        pattern,
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
+
+
 def validate_citations(
     note: str,
     allowed_chunk_ids: list[str],
@@ -263,7 +301,8 @@ Draft the internal handling note now.
         max_tokens=700,
     )
 
-    note = response.choices[0].message.content
+    raw_note = response.choices[0].message.content
+    note = clean_generated_text(raw_note or "")
 
     if not note:
         raise RuntimeError(
