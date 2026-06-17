@@ -13,6 +13,13 @@ local.settings.json
 # Azure Functions local packages
 function_app/.python_packages/
 
+# Azurite local storage emulator data
+AzuriteConfig
+__azurite_db_*.json
+__blobstorage__/
+__queuestorage__/
+__tablestorage__/
+
 # Environment secrets
 .env
 .env.*

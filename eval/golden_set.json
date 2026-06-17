@@ -1,12 +1,18 @@
 [
   {
-    "id": "rag-flow",
-    "question": "How does the copilot answer questions?",
-    "expected_terms": ["retrieval", "Azure AI Search", "Azure OpenAI"]
+    "id": "service-delay-human-review",
+    "complaint": "The customer says they complained three weeks ago but the firm has not responded. Contact: test@example.com",
+    "expected_category": "service_delay",
+    "expected_needs_human_review": true,
+    "expected_processing_stage": "azure_rag_with_guardrails",
+    "expected_redacted_contains": ["[EMAIL]"],
+    "expected_citation_ids_any": ["rg271-0022", "rg271-0024"],
+    "expected_handling_note_terms": ["complaint type", "human review"]
   },
   {
-    "id": "logging-privacy",
-    "question": "What should happen to sensitive values in logs?",
-    "expected_terms": ["redact", "personal data", "Application Insights"]
+    "id": "fees-classification",
+    "complaint": "The customer says they were charged an unexpected fee and the billing was not explained.",
+    "expected_category": "fees_and_charges",
+    "expected_processing_stage": "azure_rag_with_guardrails"
   }
 ]
