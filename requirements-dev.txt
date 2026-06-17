@@ -2,3 +2,5 @@ openai
 pydantic>=2.8
 pypdf
 python-dotenv
+azure-search-documents
+azure-identity
