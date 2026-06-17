@@ -2,6 +2,14 @@ import json
 
 import azure.functions as func
 
+from classifier import classify
+from generation import generate_handling_note
+from pii import redact
+from retrieval import retrieve
+import json
+
+import azure.functions as func
+
 from pii import redact
 
 from classifier import classify
