@@ -47,6 +47,7 @@ CHECKPOINT_PATH = (
 MAX_BATCH_CHARS = 9_000
 MIN_BATCH_CHARS = 6_000
 MAX_FINAL_CHUNK_CHARS = 4_000
+MAX_PLAN_REPAIR_ATTEMPTS = 2
 # These are not final chunks.
 # They are small, immutable evidence units that the agent groups.
 TARGET_UNIT_CHARS = 700
@@ -551,6 +552,53 @@ def validate_plan(
             )
 
 
+def split_units_for_final_chunk_limit(
+    units: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """
+    Splits an oversized planned chunk into adjacent source-unit groups.
+    """
+
+    groups: list[list[dict[str, Any]]] = []
+    current_group: list[dict[str, Any]] = []
+    current_chars = 0
+
+    for unit in units:
+        unit_chars = len(unit["text"])
+
+        if unit_chars > MAX_FINAL_CHUNK_CHARS:
+            raise ValueError(
+                "A single source unit exceeds the final chunk limit: "
+                f"{unit['unit_id']} ({unit_chars:,} characters)"
+            )
+
+        candidate_chars = (
+            unit_chars
+            if not current_group
+            else current_chars + 2 + unit_chars
+        )
+
+        if (
+            current_group
+            and candidate_chars > MAX_FINAL_CHUNK_CHARS
+        ):
+            groups.append(current_group)
+            current_group = []
+            current_chars = 0
+
+        current_group.append(unit)
+        current_chars = (
+            unit_chars
+            if current_chars == 0
+            else current_chars + 2 + unit_chars
+        )
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups
+
+
 def reconstruct_chunks(
     plan: BatchChunkPlan,
     batch: list[dict[str, Any]],
@@ -570,63 +618,76 @@ def reconstruct_chunks(
 
     reconstructed: list[dict[str, Any]] = []
 
-    for offset, planned_chunk in enumerate(
-        plan.chunks
-    ):
+    for planned_chunk in plan.chunks:
         selected_units = [
             unit_lookup[unit_id]
             for unit_id in planned_chunk.unit_ids
         ]
 
-        content = "\n\n".join(
-            unit["text"]
-            for unit in selected_units
+        final_unit_groups = split_units_for_final_chunk_limit(
+            selected_units
         )
 
-        if len(content) > MAX_FINAL_CHUNK_CHARS:
-            raise ValueError(
-                "Agent created an oversized final chunk: "
-                f"{planned_chunk.unit_ids} "
-                f"({len(content):,} characters)"
+        for group_index, unit_group in enumerate(
+            final_unit_groups,
+            start=1,
+        ):
+            content = "\n\n".join(
+                unit["text"]
+                for unit in unit_group
             )
 
-        pages = sorted(
-            {
-                unit["page"]
-                for unit in selected_units
-            }
-        )
+            if len(content) > MAX_FINAL_CHUNK_CHARS:
+                raise ValueError(
+                    "Agent created an oversized final chunk: "
+                    f"{[unit['unit_id'] for unit in unit_group]} "
+                    f"({len(content):,} characters)"
+                )
 
-        chunk_number = starting_number + offset
+            pages = sorted(
+                {
+                    unit["page"]
+                    for unit in unit_group
+                }
+            )
 
-        reconstructed.append(
-            {
-                "id": f"rg271-{chunk_number:04d}",
-                "title": planned_chunk.title,
-                "topic": planned_chunk.topic,
-                "summary": planned_chunk.summary,
-                "content": content,
-                "page_start": min(pages),
-                "page_end": max(pages),
-                "source_unit_ids": planned_chunk.unit_ids,
-                "source_block_ids": sorted(
-                    {
-                        unit["source_block_id"]
-                        for unit in selected_units
-                    }
-                ),
-                "agent_rationale": planned_chunk.rationale,
-                "source": (
-                    "ASIC Regulatory Guide 271: "
-                    "Internal dispute resolution"
-                ),
-                "batch_number": batch_number,
-                "character_count": len(content),
-                "content_sha256": hashlib.sha256(
-                    content.encode("utf-8")
-                ).hexdigest(),
-            }
-        )
+            chunk_number = starting_number + len(reconstructed)
+            title = planned_chunk.title
+
+            if len(final_unit_groups) > 1:
+                title = f"{title} (part {group_index})"
+
+            reconstructed.append(
+                {
+                    "id": f"rg271-{chunk_number:04d}",
+                    "title": title,
+                    "topic": planned_chunk.topic,
+                    "summary": planned_chunk.summary,
+                    "content": content,
+                    "page_start": min(pages),
+                    "page_end": max(pages),
+                    "source_unit_ids": [
+                        unit["unit_id"]
+                        for unit in unit_group
+                    ],
+                    "source_block_ids": sorted(
+                        {
+                            unit["source_block_id"]
+                            for unit in unit_group
+                        }
+                    ),
+                    "agent_rationale": planned_chunk.rationale,
+                    "source": (
+                        "ASIC Regulatory Guide 271: "
+                        "Internal dispute resolution"
+                    ),
+                    "batch_number": batch_number,
+                    "character_count": len(content),
+                    "content_sha256": hashlib.sha256(
+                        content.encode("utf-8")
+                    ).hexdigest(),
+                }
+            )
 
     return reconstructed
 
@@ -677,9 +738,10 @@ def call_chunking_agent(
     client: OpenAI,
     deployment: str,
     batch: list[dict[str, Any]],
+    validation_error: str | None = None,
 ) -> tuple[BatchChunkPlan, int]:
     """
-    Requests a validated structured chunk plan.
+    Requests a structured chunk plan.
     """
 
     expected_ids = [
@@ -687,11 +749,23 @@ def call_chunking_agent(
         for unit in batch
     ]
 
+    repair_instruction = ""
+
+    if validation_error:
+        repair_instruction = (
+            "\n\nYour previous chunk plan failed validation. "
+            "Return a corrected plan that covers every expected ID exactly once, "
+            "in the exact order shown. Do not omit short standalone units, "
+            "even when they look like duplicate labels.\n\n"
+            f"VALIDATION ERROR:\n{validation_error}\n"
+        )
+
     user_prompt = (
         "Group the following adjacent regulatory source units "
         "into semantically coherent chunks.\n\n"
         "Every ID in this exact sequence must appear once:\n"
         f"{expected_ids}\n\n"
+        f"{repair_instruction}"
         "SOURCE UNITS:\n\n"
         f"{format_batch_for_agent(batch)}"
     )
@@ -731,6 +805,49 @@ def call_chunking_agent(
     )
 
     return message.parsed, tokens_used
+
+
+def call_validated_chunking_agent(
+    client: OpenAI,
+    deployment: str,
+    batch: list[dict[str, Any]],
+    batch_index: int,
+) -> tuple[BatchChunkPlan, int]:
+    """
+    Calls the agent and retries when source coverage validation fails.
+    """
+
+    total_tokens = 0
+    validation_error: str | None = None
+
+    for attempt in range(MAX_PLAN_REPAIR_ATTEMPTS + 1):
+        plan, tokens_used = call_chunking_agent(
+            client=client,
+            deployment=deployment,
+            batch=batch,
+            validation_error=validation_error,
+        )
+        total_tokens += tokens_used
+
+        try:
+            validate_plan(
+                plan=plan,
+                batch=batch,
+            )
+            return plan, total_tokens
+        except ValueError as exc:
+            validation_error = str(exc)
+
+            if attempt >= MAX_PLAN_REPAIR_ATTEMPTS:
+                raise
+
+            print(
+                f"Batch {batch_index} failed validation; "
+                f"requesting corrected plan "
+                f"({attempt + 1}/{MAX_PLAN_REPAIR_ATTEMPTS})..."
+            )
+
+    raise RuntimeError("Unreachable chunk plan retry state.")
 
 
 def save_json(
@@ -848,15 +965,11 @@ def run_agentic_chunking(
             f"with {len(batch)} source units..."
         )
 
-        plan, tokens_used = call_chunking_agent(
+        plan, tokens_used = call_validated_chunking_agent(
             client=client,
             deployment=deployment,
             batch=batch,
-        )
-
-        validate_plan(
-            plan=plan,
-            batch=batch,
+            batch_index=batch_index,
         )
 
         reconstructed = reconstruct_chunks(
