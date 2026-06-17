@@ -19,3 +19,14 @@ local.settings.json
 
 # VS Code local settings
 .vscode/
+
+# Downloaded source documents
+ingestion/data/*.pdf
+
+# Generated ingestion outputs
+ingestion/data/*_chunks.json
+
+# Generated ingestion working files
+ingestion/data/rg271_source_blocks.json
+ingestion/data/rg271_agentic_chunks.json
+ingestion/data/agentic_checkpoint.json
