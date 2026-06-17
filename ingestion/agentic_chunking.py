@@ -44,8 +44,9 @@ CHECKPOINT_PATH = (
 
 # Maximum approximate input size sent in one agent request.
 # This keeps requests smaller, cheaper and easier to inspect.
-MAX_BATCH_CHARS = 14_000
-
+MAX_BATCH_CHARS = 9_000
+MIN_BATCH_CHARS = 6_000
+MAX_FINAL_CHUNK_CHARS = 4_000
 # These are not final chunks.
 # They are small, immutable evidence units that the agent groups.
 TARGET_UNIT_CHARS = 700
@@ -152,6 +153,10 @@ Important rules:
 10. Avoid chunks containing only an isolated heading where possible.
 11. The title, topic, summary and rationale are metadata only.
 12. The actual final chunk content will be reconstructed from the original source units by Python.
+13. Aim for final chunks between approximately 500 and 3,000 characters.
+14. Do not create a chunk larger than 4,000 characters unless preserving an inseparable table makes it unavoidable.
+15. Do not combine different firm types merely because they appear in the same table.
+16. Do not attach a new section heading to the preceding section.
 
 Return only the structured chunk plan.
 """.strip()
@@ -407,13 +412,35 @@ def build_source_units(
     return units
 
 
+def is_section_heading(unit: dict[str, Any]) -> bool:
+    """
+    Detects short document headings so a new model batch can
+    begin at a meaningful section boundary.
+    """
+
+    text = unit["text"].strip()
+
+    return (
+        text in KNOWN_HEADINGS
+        or (
+            len(text) <= 90
+            and not text.endswith((".", ";", ":"))
+            and not text.startswith(
+                ("RG 271.", "Note", "Table", "Example")
+            )
+        )
+    )
+
+
 def create_batches(
     units: list[dict[str, Any]],
 ) -> list[list[dict[str, Any]]]:
     """
-    Creates cost-controlled sequential batches.
+    Creates sequential batches and prefers starting a new batch
+    at a document section heading.
 
-    Units remain in original document order.
+    This prevents headings from being stranded at the end of
+    the previous model request.
     """
 
     batches: list[list[dict[str, Any]]] = []
@@ -423,10 +450,18 @@ def create_batches(
     for unit in units:
         unit_size = len(unit["text"])
 
-        if (
+        starts_new_section = (
+            current_batch
+            and current_chars >= MIN_BATCH_CHARS
+            and is_section_heading(unit)
+        )
+
+        exceeds_hard_limit = (
             current_batch
             and current_chars + unit_size > MAX_BATCH_CHARS
-        ):
+        )
+
+        if starts_new_section or exceeds_hard_limit:
             batches.append(current_batch)
             current_batch = []
             current_chars = 0
@@ -547,6 +582,13 @@ def reconstruct_chunks(
             unit["text"]
             for unit in selected_units
         )
+
+        if len(content) > MAX_FINAL_CHUNK_CHARS:
+            raise ValueError(
+                "Agent created an oversized final chunk: "
+                f"{planned_chunk.unit_ids} "
+                f"({len(content):,} characters)"
+            )
 
         pages = sorted(
             {
